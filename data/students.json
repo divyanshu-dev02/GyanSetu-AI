@@ -1,0 +1,41 @@
+[
+  {
+    "id": "stu-aarav",
+    "name": "Aarav",
+    "grade": "Class 9",
+    "preferredLanguage": "en",
+    "currentLevel": "standard",
+    "masteredTopics": ["Force and Motion Basics", "Linear Equations"],
+    "weakTopics": ["Newton's Third Law", "Quadratic Equations"],
+    "recentScores": [
+      { "topic": "Force and Motion Basics", "score": 3, "total": 3, "timestamp": "2026-11-24T10:00:00Z" }
+    ],
+    "streak": 4
+  },
+  {
+    "id": "stu-diya",
+    "name": "Diya",
+    "grade": "Class 9",
+    "preferredLanguage": "hi",
+    "currentLevel": "simple",
+    "masteredTopics": ["Plant Cell Structure"],
+    "weakTopics": ["Photosynthesis", "Newton's Third Law"],
+    "recentScores": [
+      { "topic": "Plant Cell Structure", "score": 2, "total": 3, "timestamp": "2026-11-24T11:30:00Z" }
+    ],
+    "streak": 2
+  },
+  {
+    "id": "stu-karthik",
+    "name": "Karthik",
+    "grade": "Class 10",
+    "preferredLanguage": "kn",
+    "currentLevel": "advanced",
+    "masteredTopics": ["Newton's Third Law", "Photosynthesis", "Linear Equations"],
+    "weakTopics": ["Quadratic Equations"],
+    "recentScores": [
+      { "topic": "Newton's Third Law", "score": 3, "total": 3, "timestamp": "2026-11-24T14:15:00Z" }
+    ],
+    "streak": 7
+  }
+]

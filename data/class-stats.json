@@ -1,0 +1,58 @@
+[
+  {
+    "topic": "Newton's Third Law",
+    "masteryPercent": 42,
+    "strugglingCount": 18,
+    "totalStudents": 32,
+    "topMisconception": "Thinks action and reaction forces cancel out on the same object"
+  },
+  {
+    "topic": "Quadratic Equations",
+    "masteryPercent": 55,
+    "strugglingCount": 14,
+    "totalStudents": 32,
+    "topMisconception": "Forgets the ± sign or drops the middle term when squaring"
+  },
+  {
+    "topic": "Photosynthesis",
+    "masteryPercent": 68,
+    "strugglingCount": 10,
+    "totalStudents": 32,
+    "topMisconception": "Confuses respiration with photosynthesis at night"
+  },
+  {
+    "topic": "Ohm's Law & Circuits",
+    "masteryPercent": 51,
+    "strugglingCount": 16,
+    "totalStudents": 32,
+    "topMisconception": "Confuses series and parallel current/voltage rules"
+  },
+  {
+    "topic": "Trigonometry Basics",
+    "masteryPercent": 60,
+    "strugglingCount": 13,
+    "totalStudents": 32,
+    "topMisconception": "Swaps opposite and adjacent sides when reference angle changes"
+  },
+  {
+    "topic": "Chemical Reactions & Balancing",
+    "masteryPercent": 64,
+    "strugglingCount": 11,
+    "totalStudents": 32,
+    "topMisconception": "Changes subscripts instead of coefficients when balancing"
+  },
+  {
+    "topic": "Cell Division (Mitosis)",
+    "masteryPercent": 74,
+    "strugglingCount": 8,
+    "totalStudents": 32,
+    "topMisconception": "Mixes up chromosome count in mitosis vs meiosis"
+  },
+  {
+    "topic": "Linear Equations",
+    "masteryPercent": 84,
+    "strugglingCount": 5,
+    "totalStudents": 32,
+    "topMisconception": "Sign flip error when transposing across equals sign"
+  }
+]
