@@ -1,13 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { GraduationCap, Users } from "lucide-react";
+import { useState, useEffect } from "react";
+import { GraduationCap, BookOpen, Moon, Sun } from "lucide-react";
 import { StudentPage } from "@/components/student-page";
 import { TeacherPage } from "@/components/teacher-page";
+import { cn } from "@/lib/utils";
 
 export default function HomePage() {
   const [role, setRole] = useState<"student" | "teacher">("student");
   const [dark, setDark] = useState(false);
+
+  // Respect system preference on first load
+  useEffect(() => {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setDark(prefersDark);
+    document.documentElement.classList.toggle("dark", prefersDark);
+  }, []);
 
   function toggleTheme() {
     setDark((prev) => {
@@ -18,32 +26,54 @@ export default function HomePage() {
   }
 
   return (
-    <div className="relative">
-      {/* Global nav — fixed top-right */}
-      <nav className="fixed right-3 top-3 z-50 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setRole(role === "student" ? "teacher" : "student")}
-          className="flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-        >
-          {role === "student" ? (
-            <><Users className="h-4 w-4" />Teacher View</>
-          ) : (
-            <><GraduationCap className="h-4 w-4" />Student View</>
-          )}
-        </button>
+    <div className="relative min-h-[100dvh] bg-slate-50 dark:bg-slate-950">
+      {/* ── Global floating nav ── */}
+      <nav className="fixed right-3 top-3 z-50 flex items-center gap-1.5">
+        {/* Role switcher */}
+        <div className="flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-card-md dark:border-slate-800 dark:bg-slate-900">
+          <button
+            type="button"
+            onClick={() => setRole("student")}
+            className={cn(
+              "flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+              role === "student"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"
+            )}
+          >
+            <GraduationCap className="h-3.5 w-3.5" />
+            Student
+          </button>
+          <button
+            type="button"
+            onClick={() => setRole("teacher")}
+            className={cn(
+              "flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+              role === "teacher"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800"
+            )}
+          >
+            <BookOpen className="h-3.5 w-3.5" />
+            Teacher
+          </button>
+        </div>
+
+        {/* Dark mode toggle */}
         <button
           type="button"
           onClick={toggleTheme}
           aria-label="Toggle dark mode"
-          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
+          className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-slate-200 bg-white shadow-card-md transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800"
         >
-          {dark ? "☀️" : "🌙"}
+          {dark
+            ? <Sun className="h-4 w-4 text-amber-500" />
+            : <Moon className="h-4 w-4 text-slate-500" />}
         </button>
       </nav>
 
+      {/* ── Page content ── */}
       {role === "student" ? <StudentPage /> : <TeacherPage />}
     </div>
   );
 }
-

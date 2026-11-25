@@ -10,7 +10,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     service: "gyansetu-ai",
-    demoMode: env.DEMO_MODE || !env.GEMINI_API_KEY,
+    demoMode: env.DEMO_MODE || (!env.GROQ_API_KEY && !env.GEMINI_API_KEY),
     timestamp: new Date().toISOString(),
   });
 }
