@@ -94,7 +94,7 @@ export async function runStudentAgent(
   emit: EmitFn
 ) {
   const env = getServerEnv();
-  const apiKey = env.GROQ_API_KEY;
+  const apiKey = env.GROQ_API_KEY || "";
 
   // Stream live pedagogical trace steps
   let step = 1;
@@ -222,7 +222,7 @@ ${params.gradeResult ? `Note: The student failed a previous quiz. Please provide
 
 export async function runTeacherAgent(language: Language, emit: EmitFn) {
   const env = getServerEnv();
-  const apiKey = env.GROQ_API_KEY;
+  const apiKey = env.GROQ_API_KEY || "";
 
   let step = 1;
   const emitTrace = async (tool: string, summary: string) => {

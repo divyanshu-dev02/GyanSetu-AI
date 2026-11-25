@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList,
 } from "recharts";
@@ -9,8 +10,12 @@ import {
   Download, Loader2, Minus, RefreshCw, Sparkles, UserCheck, LayoutDashboard,
 } from "lucide-react";
 import { AgentTrace } from "@/components/agent-trace";
-import { ClassAnalyticsView } from "@/components/class-analytics-view";
 import { ManageStudentsModal } from "@/components/manage-students-modal";
+
+const ClassAnalyticsView = dynamic(
+  () => import("@/components/class-analytics-view").then((m) => m.ClassAnalyticsView),
+  { ssr: false }
+);
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";

@@ -1,12 +1,35 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { GraduationCap, BookOpen, Moon, Sun, UserCheck } from "lucide-react";
-import { StudentPage } from "@/components/student-page";
-import { TeacherPage } from "@/components/teacher-page";
 import { AuthModal } from "@/components/auth-modal";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+
+const StudentPage = dynamic(
+  () => import("@/components/student-page").then((m) => m.StudentPage),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      </div>
+    ),
+  }
+);
+
+const TeacherPage = dynamic(
+  () => import("@/components/teacher-page").then((m) => m.TeacherPage),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
+      </div>
+    ),
+  }
+);
 
 export default function HomePage() {
   const [role, setRole] = useState<"student" | "teacher">("student");

@@ -42,6 +42,24 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} ${devanagari.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(regs) {
+                  for (var i = 0; i < regs.length; i++) { regs[i].unregister(); }
+                });
+              }
+              if (typeof window !== 'undefined' && 'caches' in window) {
+                caches.keys().then(function(keys) {
+                  for (var i = 0; i < keys.length; i++) { caches.delete(keys[i]); }
+                });
+              }
+            `,
+          }}
+        />
+      </head>
       <body className="min-h-[100dvh] bg-slate-50 font-sans text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
         <AuthProvider>
           {children}
