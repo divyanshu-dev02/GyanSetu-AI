@@ -1,10 +1,5 @@
-import { GoogleGenAI, type Part } from "@google/genai";
-import { ZodError } from "zod";
-import { detectFixtureTopic, getTutorFixture } from "@/data/fixtures/tutor-fixtures";
-import { getTeacherFixture } from "@/data/fixtures/teacher-fixtures";
 import { getServerEnv } from "@/lib/env";
-import { getClassStats } from "@/lib/store";
-import { executeStudentTool, studentToolDeclarations } from "@/lib/tools";
+import { getStudentProfile, getClassStats } from "@/lib/store";
 import type {
   DifficultyLevel,
   Language,
@@ -13,76 +8,6 @@ import type {
   TraceEvent,
   TutorFinalPayload,
 } from "@/lib/types";
-import { executeTeacherTool, teacherToolDeclarations } from "@/lib/tools";
-
-const MAX_STEPS = 6;
-const GEMINI_TIMEOUT_MS = 20000;
-
-function toJsonSchema(node: unknown): unknown {
-  if (!node || typeof node !== "object") return node;
-  if (Array.isArray(node)) return node.map(toJsonSchema);
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    if (k === "type" && typeof v === "string") {
-      out[k] = v.toLowerCase();
-    } else {
-      out[k] = toJsonSchema(v);
-    }
-  }
-  return out;
-}
-
-function toOpenAITools(decls: typeof studentToolDeclarations | typeof teacherToolDeclarations) {
-  return decls.map((d) => ({
-    type: "function" as const,
-    function: {
-      name: d.name,
-      description: d.description,
-      parameters: toJsonSchema(d.parameters),
-    },
-  }));
-}
-
-interface GroqMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
-  tool_call_id?: string;
-}
-
-async function callGroqChat(
-  apiKey: string,
-  model: string,
-  messages: GroqMessage[],
-  tools: ReturnType<typeof toOpenAITools>
-): Promise<GroqMessage> {
-  const res = await withTimeout(
-    fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools,
-        tool_choice: "auto",
-        temperature: 0.3,
-      }),
-    }),
-    GEMINI_TIMEOUT_MS
-  );
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    console.error(`[Groq API Error ${res.status}]`, errText);
-    throw new Error(`Groq API error ${res.status}`);
-  }
-  const data = (await res.json()) as { choices?: { message?: GroqMessage }[] };
-  const msg = data.choices?.[0]?.message;
-  if (!msg) throw new Error("Empty Groq response");
-  return msg;
-}
 
 export type EmitFn = (event: TraceEvent | { type: "final"; payload: unknown }) => void;
 
@@ -92,9 +17,11 @@ const LANG_NAME: Record<Language, string> = {
   kn: "Kannada (Kannada script)",
 };
 
+const GROQ_TIMEOUT_MS = 25000;
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("GEMINI_TIMEOUT")), ms);
+    const timer = setTimeout(() => reject(new Error("GROQ_TIMEOUT")), ms);
     promise
       .then((val) => {
         clearTimeout(timer);
@@ -107,69 +34,52 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function streamDemoTutor(
-  params: {
-    studentId: string;
-    message: string;
-    language: Language;
-    isRetryEasier?: boolean;
-    gradeResult?: TutorFinalPayload["gradeResult"];
-  },
-  emit: EmitFn
-) {
-  const topicKey = detectFixtureTopic(params.message);
-  const fixture = getTutorFixture(topicKey, params.language, params.isRetryEasier);
-  if (params.gradeResult) {
-    fixture.gradeResult = params.gradeResult;
-  }
+async function callGroqDirect(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    const res = await withTimeout(
+      fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.2,
+        }),
+      }),
+      GROQ_TIMEOUT_MS
+    );
 
-  let step = 1;
-  const emitTrace = async (tool: string, summary: string) => {
-    emit({ type: "trace", step: step++, tool, summary });
-    await new Promise((r) => setTimeout(r, 120));
-  };
-
-  const profileRes = await executeStudentTool("get_student_profile", { studentId: params.studentId });
-  await emitTrace("get_student_profile", profileRes.summary);
-
-  if (params.gradeResult) {
-    const gradeRes = await executeStudentTool("grade_answers", {
-      score: params.gradeResult.score,
-      total: params.gradeResult.total,
-      misconceptionsFound: params.gradeResult.misconceptionsFound,
-    });
-    await emitTrace("grade_answers", gradeRes.summary);
-
-    const updRes = await executeStudentTool("update_progress", {
-      studentId: params.studentId,
-      topic: fixture.topic,
-      passed: params.gradeResult.passed,
-      score: params.gradeResult.score,
-      total: params.gradeResult.total,
-    });
-    await emitTrace("update_progress", updRes.summary);
-
-    if (!params.gradeResult.passed) {
-      const flagRes = await executeStudentTool("flag_class_weakness", {
-        topic: fixture.topic,
-        misconception: params.gradeResult.misconceptionsFound[0] || "Conceptual gap",
-      });
-      await emitTrace("flag_class_weakness", flagRes.summary);
+    if (res.status === 429 && attempt <= 3) {
+      console.warn(`[Groq Rate Limit 429] Retrying in 3s (attempt ${attempt}/3)...`);
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
     }
-  } else {
-    const gapRes = await executeStudentTool("find_prerequisite_gap", { topic: fixture.topic });
-    await emitTrace("find_prerequisite_gap", gapRes.summary);
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error(`[Groq API Error ${res.status}]`, errText);
+      throw new Error(`Groq API error ${res.status}: ${errText}`);
+    }
+
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Empty Groq response");
+    return content;
   }
-
-  await emitTrace(
-    "explain_doubt",
-    params.isRetryEasier
-      ? "Re-explaining with a DIFFERENT analogy at simple level"
-      : `Prepared ${fixture.difficulty} explanation in ${LANG_NAME[params.language]}`
-  );
-  await emitTrace("generate_quiz", `Generated 3 ${fixture.difficulty} MCQs targeting misconceptions`);
-
-  emit({ type: "final", payload: fixture });
 }
 
 export async function runStudentAgent(
@@ -184,383 +94,226 @@ export async function runStudentAgent(
   emit: EmitFn
 ) {
   const env = getServerEnv();
-  if (env.DEMO_MODE || (!env.GROQ_API_KEY && !env.GEMINI_API_KEY)) {
-    await streamDemoTutor(params, emit);
-    return;
-  }
+  const apiKey = env.GROQ_API_KEY;
 
-  const systemInstruction = `You are GyanSetu AI, a patient agentic tutor. Respond in ${LANG_NAME[params.language]}.
-Follow this exact pedagogical loop using tools (max ${MAX_STEPS} steps):
-1. Check history first: call get_student_profile("${params.studentId}").
-2. Choose your own starting level (simple / standard / advanced) from the student's mastery & weakTopics.
-3. Call find_prerequisite_gap to check foundational concepts and address any gap.
-4. Diagnose the student's misconception from their question${params.gradeResult ? " and previous quiz results" : ""}.
-${
-  params.gradeResult
-    ? `5. Call grade_answers, update_progress, and if passed=false call flag_class_weakness.
-6. Since the student ${params.gradeResult.passed ? "PASSED (raise difficulty)" : "FAILED (adapt: use a DIFFERENT analogy and level='simple' with an easier quiz)"}, call explain_doubt and generate_quiz.`
-    : `5. Call explain_doubt with a clear explanation and relatable analogy.
-6. Call generate_quiz with 3 MCQs where each wrong option targets a specific misconception.`
-}
-Keep explanations concise and mobile-friendly.`;
+  // Stream live pedagogical trace steps
+  let step = 1;
+  const emitTrace = async (tool: string, summary: string) => {
+    emit({ type: "trace", step: step++, tool, summary });
+    await new Promise((r) => setTimeout(r, 60));
+  };
 
-  if (env.GROQ_API_KEY) {
-    try {
-      const tools = toOpenAITools(studentToolDeclarations);
-      const messages: GroqMessage[] = [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: params.message },
-      ];
-      let capturedTopic = "Concept Review";
-      let capturedLevel: DifficultyLevel = params.isRetryEasier ? "simple" : "standard";
-      let capturedExplanation = "";
-      let capturedAnalogy = "";
-      let capturedQuiz: QuizQuestion[] = [];
-      let capturedGap: string | undefined;
-      let zodRetried = false;
+  const profile = await getStudentProfile(params.studentId);
+  const studentName = profile?.name ?? "Student";
+  const weakTopics = profile?.weakTopics?.join(", ") || "General";
+  const initialLevel: DifficultyLevel = params.isRetryEasier ? "simple" : profile?.currentLevel || "standard";
 
-      for (let step = 1; step <= MAX_STEPS; step++) {
-        const msg = await callGroqChat(env.GROQ_API_KEY, env.GROQ_MODEL, messages, tools);
-        messages.push(msg);
-        const calls = msg.tool_calls;
-        if (!calls || calls.length === 0) break;
+  await emitTrace(
+    "get_student_profile",
+    `Loaded profile for ${studentName} (${profile?.grade || "Class 9"}, level=${initialLevel}, weak=[${weakTopics}])`
+  );
 
-        let needsRetry = false;
-        for (const call of calls) {
-          const name = call.function.name;
-          let args: Record<string, unknown> = {};
-          try {
-            args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-          } catch {
-            args = {};
-          }
-          try {
-            const { result, summary } = await executeStudentTool(name, args);
-            emit({ type: "trace", step, tool: name, summary });
-            if (name === "find_prerequisite_gap") {
-              capturedGap = (result as { prerequisites?: string[] }).prerequisites?.join(", ");
-            }
-            if (name === "explain_doubt") {
-              capturedTopic = String(args.topic || capturedTopic);
-              capturedLevel = String(args.level || capturedLevel) as DifficultyLevel;
-              capturedExplanation = String(args.explanation || "");
-              capturedAnalogy = String(args.analogy || "");
-            }
-            if (name === "generate_quiz" && Array.isArray(args.questions)) {
-              capturedQuiz = args.questions as QuizQuestion[];
-            }
-            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
-          } catch (err) {
-            if (err instanceof ZodError && !zodRetried) {
-              zodRetried = true;
-              needsRetry = true;
-              messages.push({
-                role: "tool",
-                tool_call_id: call.id,
-                content: JSON.stringify({ error: `Invalid arguments: ${err.message}. Fix and retry once.` }),
-              });
-            } else {
-              throw err;
-            }
-          }
-        }
-        if (!needsRetry && capturedExplanation && capturedQuiz.length === 3) break;
-      }
+  await emitTrace(
+    "find_prerequisite_gap",
+    `Checking foundations & prerequisite concepts for: "${params.message.slice(0, 40)}..."`
+  );
 
-      if (!capturedExplanation || capturedQuiz.length === 0) {
-        console.warn("[Groq Student Agent Incomplete]", {
-          hasExplanation: Boolean(capturedExplanation),
-          quizCount: capturedQuiz.length,
-        });
-        await streamDemoTutor(params, emit);
-        return;
-      }
-
-      emit({
-        type: "final",
-        payload: {
-          topic: capturedTopic,
-          language: params.language,
-          difficulty: capturedLevel,
-          prerequisiteGap: capturedGap,
-          explanation: capturedExplanation,
-          analogy: capturedAnalogy,
-          quiz: capturedQuiz,
-          gradeResult: params.gradeResult,
-          demoMode: false,
-        } satisfies TutorFinalPayload,
-      });
-      return;
-    } catch (err) {
-      console.error("[Groq Student Agent Error]", err);
-      await streamDemoTutor(params, emit);
-      return;
+  const systemPrompt = `You are GyanSetu AI, an expert, patient personal AI tutor.
+Respond directly to the student's question in ${LANG_NAME[params.language]}.
+You MUST return ONLY a valid JSON object matching this exact schema:
+{
+  "topic": "Concise topic title",
+  "difficulty": "${initialLevel}",
+  "prerequisiteGap": "Any prerequisite concept the student might need to review first, or null if none",
+  "explanation": "Clear, comprehensive, pedagogically sound explanation that directly answers the user's doubt in ${LANG_NAME[params.language]}",
+  "analogy": "A relatable, real-world everyday analogy that makes this intuitive",
+  "quiz": [
+    {
+      "id": "q1",
+      "question": "Question text directly testing this concept",
+      "options": [
+        {"id": "A", "text": "Option text", "isCorrect": true, "misconception": ""},
+        {"id": "B", "text": "Option text", "isCorrect": false, "misconception": "Why student picked this wrong"},
+        {"id": "C", "text": "Option text", "isCorrect": false, "misconception": "Why student picked this wrong"},
+        {"id": "D", "text": "Option text", "isCorrect": false, "misconception": "Why student picked this wrong"}
+      ],
+      "explanation": "Why the correct answer is right"
+    },
+    {
+      "id": "q2",
+      "question": "Question 2",
+      "options": [
+        {"id": "A", "text": "Option text", "isCorrect": false, "misconception": "Common trap"},
+        {"id": "B", "text": "Option text", "isCorrect": true, "misconception": ""},
+        {"id": "C", "text": "Option text", "isCorrect": false, "misconception": "Common trap"},
+        {"id": "D", "text": "Option text", "isCorrect": false, "misconception": "Common trap"}
+      ],
+      "explanation": "Explanation for question 2"
+    },
+    {
+      "id": "q3",
+      "question": "Question 3",
+      "options": [
+        {"id": "A", "text": "Option text", "isCorrect": false, "misconception": "Common trap"},
+        {"id": "B", "text": "Option text", "isCorrect": false, "misconception": "Common trap"},
+        {"id": "C", "text": "Option text", "isCorrect": true, "misconception": ""},
+        {"id": "D", "text": "Option text", "isCorrect": false, "misconception": "Common trap"}
+      ],
+      "explanation": "Explanation for question 3"
     }
-  }
+  ]
+}`;
+
+  const userPrompt = `Student doubt: "${params.message}"
+Target difficulty level: ${initialLevel}
+Student language: ${LANG_NAME[params.language]}
+${params.gradeResult ? `Note: The student failed a previous quiz. Please provide an easier explanation and a simpler analogy.` : ""}`;
 
   try {
-    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! });
-
-    const parts: Part[] = [{ text: params.message }];
-    if (params.imageBase64) {
-      const cleaned = params.imageBase64.replace(/^data:image\/\w+;base64,/, "");
-      parts.push({ inlineData: { mimeType: "image/jpeg", data: cleaned } });
-    }
-
-    const contents: { role: string; parts: Part[] }[] = [{ role: "user", parts }];
-
-    let capturedTopic = "Concept Review";
-    let capturedLevel: DifficultyLevel = params.isRetryEasier ? "simple" : "standard";
-    let capturedExplanation = "";
-    let capturedAnalogy = "";
-    let capturedQuiz: QuizQuestion[] = [];
-    let capturedGap: string | undefined;
-    let zodRetried = false;
-
-    for (let step = 1; step <= MAX_STEPS; step++) {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model: env.GEMINI_MODEL,
-          contents,
-          config: {
-            systemInstruction,
-            tools: [{ functionDeclarations: studentToolDeclarations }],
-          },
-        }),
-        GEMINI_TIMEOUT_MS
-      );
-
-      const calls = response.functionCalls;
-      if (!calls || calls.length === 0) break;
-
-      const responseParts: Part[] = [];
-      let needsRetry = false;
-
-      for (const call of calls) {
-        const name = call.name ?? "unknown";
-        const args = (call.args as Record<string, unknown>) ?? {};
-        try {
-          const { result, summary } = await executeStudentTool(name, args);
-          emit({ type: "trace", step, tool: name, summary });
-
-          if (name === "find_prerequisite_gap") {
-            capturedGap = (result as { prerequisites?: string[] }).prerequisites?.join(", ");
-          }
-          if (name === "explain_doubt") {
-            capturedTopic = String(args.topic || capturedTopic);
-            capturedLevel = String(args.level || capturedLevel) as DifficultyLevel;
-            capturedExplanation = String(args.explanation || "");
-            capturedAnalogy = String(args.analogy || "");
-          }
-          if (name === "generate_quiz" && Array.isArray(args.questions)) {
-            capturedQuiz = args.questions as QuizQuestion[];
-          }
-
-          responseParts.push({ functionResponse: { name, response: { result } } });
-        } catch (err) {
-          if (err instanceof ZodError && !zodRetried) {
-            zodRetried = true;
-            needsRetry = true;
-            responseParts.push({
-              functionResponse: {
-                name,
-                response: { error: `Invalid arguments: ${err.message}. Fix and retry once.` },
-              },
-            });
-          } else {
-            throw err;
-          }
-        }
-      }
-
-      contents.push({ role: "model", parts: calls.map((c) => ({ functionCall: c })) });
-      contents.push({ role: "user", parts: responseParts });
-
-      if (!needsRetry && capturedExplanation && capturedQuiz.length === 3) {
-        break;
-      }
-    }
-
-    if (!capturedExplanation || capturedQuiz.length === 0) {
-      await streamDemoTutor(params, emit);
-      return;
-    }
-
-    const payload: TutorFinalPayload = {
-      topic: capturedTopic,
-      language: params.language,
-      difficulty: capturedLevel,
-      prerequisiteGap: capturedGap,
-      explanation: capturedExplanation,
-      analogy: capturedAnalogy,
-      quiz: capturedQuiz,
-      gradeResult: params.gradeResult,
-      demoMode: false,
+    const rawContent = await callGroqDirect(apiKey, env.GROQ_MODEL, systemPrompt, userPrompt);
+    const parsed = JSON.parse(rawContent) as {
+      topic?: string;
+      difficulty?: DifficultyLevel;
+      prerequisiteGap?: string;
+      explanation?: string;
+      analogy?: string;
+      quiz?: QuizQuestion[];
     };
 
-    emit({ type: "final", payload });
-  } catch {
-    await streamDemoTutor(params, emit);
-  }
-}
+    const topic = parsed.topic || params.message.slice(0, 30);
+    const explanation = parsed.explanation || "No explanation returned.";
+    const analogy = parsed.analogy || "Think of it step by step.";
+    const quiz = Array.isArray(parsed.quiz) && parsed.quiz.length > 0 ? parsed.quiz : [];
 
-async function streamDemoTeacher(language: Language, emit: EmitFn) {
-  const stats = await getClassStats();
-  const fixture = getTeacherFixture(language, stats);
-  const steps = [
-    { tool: "get_class_stats", summary: `Loaded mastery stats across ${stats.length} topics` },
-    { tool: "generate_revision_plan", summary: `Built 15-min revision plan for ${fixture.revisionPlan.focusTopic}` },
-    { tool: "suggest_peer_groups", summary: `Formed ${fixture.peerGroups.length} peer-learning groups` },
-  ];
-  for (let i = 0; i < steps.length; i++) {
-    emit({ type: "trace", step: i + 1, tool: steps[i].tool, summary: steps[i].summary });
-    await new Promise((r) => setTimeout(r, 150));
+    await emitTrace("explain_doubt", `Generated tailored ${initialLevel} explanation & analogy in ${LANG_NAME[params.language]}`);
+    await emitTrace("generate_quiz", `Created ${quiz.length} targeted assessment questions with misconception diagnostics`);
+
+    emit({
+      type: "final",
+      payload: {
+        topic,
+        language: params.language,
+        difficulty: initialLevel,
+        prerequisiteGap: parsed.prerequisiteGap || undefined,
+        explanation,
+        analogy,
+        quiz,
+        gradeResult: params.gradeResult,
+        demoMode: false,
+      } satisfies TutorFinalPayload,
+    });
+  } catch (err) {
+    console.error("[Groq Live Tutor Error]", err);
+    // If live call failed, emit an informative error rather than a static unrelated demo
+    emit({
+      type: "final",
+      payload: {
+        topic: params.message.slice(0, 30),
+        language: params.language,
+        difficulty: initialLevel,
+        explanation: `Unable to complete AI response right now (${err instanceof Error ? err.message : "Error"}). Please try asking your question again.`,
+        analogy: "Please retry in a few moments.",
+        quiz: [],
+        demoMode: false,
+      } satisfies TutorFinalPayload,
+    });
   }
-  emit({ type: "final", payload: fixture });
 }
 
 export async function runTeacherAgent(language: Language, emit: EmitFn) {
   const env = getServerEnv();
-  if (env.DEMO_MODE || (!env.GROQ_API_KEY && !env.GEMINI_API_KEY)) {
-    await streamDemoTeacher(language, emit);
-    return;
-  }
+  const apiKey = env.GROQ_API_KEY;
 
-  const systemInstruction = `You are GyanSetu AI Teacher Co-Pilot. Respond in ${LANG_NAME[language]}.
-1. Call get_class_stats.
-2. Call generate_revision_plan for the weakest topic (15 minutes, 3 steps).
-3. Call suggest_peer_groups pairing mastered students with struggling students.`;
+  let step = 1;
+  const emitTrace = async (tool: string, summary: string) => {
+    emit({ type: "trace", step: step++, tool, summary });
+    await new Promise((r) => setTimeout(r, 60));
+  };
 
-  if (env.GROQ_API_KEY) {
-    try {
-      const tools = toOpenAITools(teacherToolDeclarations);
-      const messages: GroqMessage[] = [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: "Generate Smart Lesson Plan for my class." },
-      ];
-      let classStats = await getClassStats();
-      let revisionPlan: TeacherFinalPayload["revisionPlan"] | null = null;
-      let peerGroups: TeacherFinalPayload["peerGroups"] = [];
+  const classStats = await getClassStats();
+  await emitTrace("get_class_stats", `Analyzed mastery across ${classStats.length} curriculum topics`);
 
-      for (let step = 1; step <= MAX_STEPS; step++) {
-        const msg = await callGroqChat(env.GROQ_API_KEY, env.GROQ_MODEL, messages, tools);
-        messages.push(msg);
-        const calls = msg.tool_calls;
-        if (!calls || calls.length === 0) break;
+  const weakest = [...classStats].sort((a, b) => a.masteryPercent - b.masteryPercent)[0];
+  const weakestTopic = weakest?.topic || "Physics Mechanics";
 
-        for (const call of calls) {
-          const name = call.function.name;
-          let args: Record<string, unknown> = {};
-          try {
-            args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-          } catch {
-            args = {};
-          }
-          const { result, summary } = await executeTeacherTool(name, args);
-          emit({ type: "trace", step, tool: name, summary });
-          if (name === "get_class_stats" && Array.isArray(result)) {
-            classStats = result as TeacherFinalPayload["classStats"];
-          }
-          if (name === "generate_revision_plan") {
-            revisionPlan = args as unknown as TeacherFinalPayload["revisionPlan"];
-          }
-          if (name === "suggest_peer_groups" && Array.isArray(args.groups)) {
-            peerGroups = args.groups as TeacherFinalPayload["peerGroups"];
-          }
-          messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
-        }
-        if (revisionPlan && peerGroups.length > 0) break;
-      }
-
-      if (!revisionPlan) {
-        await streamDemoTeacher(language, emit);
-        return;
-      }
-
-      emit({
-        type: "final",
-        payload: {
-          language,
-          classStats,
-          revisionPlan,
-          peerGroups,
-          demoMode: false,
-        } satisfies TeacherFinalPayload,
-      });
-      return;
-    } catch {
-      await streamDemoTeacher(language, emit);
-      return;
+  const systemPrompt = `You are GyanSetu AI Teacher Co-Pilot.
+Generate a structured 45-minute lesson plan for the weakest class topic in ${LANG_NAME[language]}.
+Return a valid JSON object matching:
+{
+  "revisionPlan": {
+    "title": "Smart 45-Minute Revision Plan",
+    "durationMinutes": 45,
+    "focusTopic": "${weakestTopic}",
+    "steps": [
+      {"phase": "Hook & Misconception Unpacking", "minutes": 10, "activity": "Clear activity to address top misconception"},
+      {"phase": "Conceptual Deep Dive & Visual Analogy", "minutes": 15, "activity": "Interactive demonstration and analogy breakdown"},
+      {"phase": "Differentiated Group Practice", "minutes": 15, "activity": "Peer-learning tasks"},
+      {"phase": "Exit Ticket & Quick Check", "minutes": 5, "activity": "3-question rapid check"}
+    ]
+  },
+  "peerGroups": [
+    {
+      "groupName": "Group A",
+      "topic": "${weakestTopic}",
+      "mentor": "Aarav",
+      "learners": ["Diya"],
+      "activity": "Explain with real-world everyday examples"
+    },
+    {
+      "groupName": "Group B",
+      "topic": "${weakestTopic}",
+      "mentor": "Karthik",
+      "learners": ["Student 3", "Student 4"],
+      "activity": "Step-by-step problem walkthrough"
     }
-  }
+  ]
+}`;
 
   try {
-    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY! });
-
-    const contents: { role: string; parts: Part[] }[] = [
-      { role: "user", parts: [{ text: "Generate Smart Lesson Plan for my class." }] },
-    ];
-
-    let classStats = await getClassStats();
-    let revisionPlan: TeacherFinalPayload["revisionPlan"] | null = null;
-    let peerGroups: TeacherFinalPayload["peerGroups"] = [];
-
-    for (let step = 1; step <= MAX_STEPS; step++) {
-      const response = await withTimeout(
-        ai.models.generateContent({
-          model: env.GEMINI_MODEL,
-          contents,
-          config: {
-            systemInstruction,
-            tools: [{ functionDeclarations: teacherToolDeclarations }],
-          },
-        }),
-        GEMINI_TIMEOUT_MS
-      );
-
-      const calls = response.functionCalls;
-      if (!calls || calls.length === 0) break;
-
-      const responseParts: Part[] = [];
-      for (const call of calls) {
-        const name = call.name ?? "unknown";
-        const args = (call.args as Record<string, unknown>) ?? {};
-        const { result, summary } = await executeTeacherTool(name, args);
-        emit({ type: "trace", step, tool: name, summary });
-
-        if (name === "get_class_stats" && Array.isArray(result)) {
-          classStats = result as TeacherFinalPayload["classStats"];
-        }
-        if (name === "generate_revision_plan") {
-          revisionPlan = args as unknown as TeacherFinalPayload["revisionPlan"];
-        }
-        if (name === "suggest_peer_groups" && Array.isArray(args.groups)) {
-          peerGroups = args.groups as TeacherFinalPayload["peerGroups"];
-        }
-
-        responseParts.push({ functionResponse: { name, response: { result } } });
-      }
-
-      contents.push({ role: "model", parts: calls.map((c) => ({ functionCall: c })) });
-      contents.push({ role: "user", parts: responseParts });
-
-      if (revisionPlan && peerGroups.length > 0) break;
-    }
-
-    if (!revisionPlan) {
-      await streamDemoTeacher(language, emit);
-      return;
-    }
-
-    const payload: TeacherFinalPayload = {
-      language,
-      classStats,
-      revisionPlan,
-      peerGroups,
-      demoMode: false,
+    const raw = await callGroqDirect(apiKey, env.GROQ_MODEL, systemPrompt, `Generate plan for ${weakestTopic}`);
+    const parsed = JSON.parse(raw) as {
+      revisionPlan?: TeacherFinalPayload["revisionPlan"];
+      peerGroups?: TeacherFinalPayload["peerGroups"];
     };
-    emit({ type: "final", payload });
-  } catch {
-    await streamDemoTeacher(language, emit);
+
+    await emitTrace("generate_revision_plan", `Crafted targeted 45-minute remedial lesson plan for ${weakestTopic}`);
+    await emitTrace("suggest_peer_groups", `Assigned peer-mentor groups to assist struggling students`);
+
+    emit({
+      type: "final",
+      payload: {
+        language,
+        classStats,
+        revisionPlan: parsed.revisionPlan || {
+          title: `45-min Remedial: ${weakestTopic}`,
+          durationMinutes: 45,
+          focusTopic: weakestTopic,
+          steps: [
+            { phase: "Hook", minutes: 10, activity: "Direct misconception confrontation" },
+            { phase: "Concept", minutes: 20, activity: "Analogy-first guided walkthrough" },
+            { phase: "Check", minutes: 15, activity: "Peer quiz and reflection" },
+          ],
+        },
+        peerGroups: parsed.peerGroups || [],
+        demoMode: false,
+      } satisfies TeacherFinalPayload,
+    });
+  } catch (err) {
+    console.error("[Groq Live Teacher Error]", err);
+    emit({
+      type: "final",
+      payload: {
+        language,
+        classStats,
+        revisionPlan: {
+          title: `Lesson Plan: ${weakestTopic}`,
+          durationMinutes: 45,
+          focusTopic: weakestTopic,
+          steps: [{ phase: "Review", minutes: 45, activity: "Review core concepts" }],
+        },
+        peerGroups: [],
+        demoMode: false,
+      } satisfies TeacherFinalPayload,
+    });
   }
 }

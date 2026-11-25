@@ -27,6 +27,25 @@ function getRedis(): Redis | null {
   return null;
 }
 
+export async function getAllStudents(): Promise<StudentProfile[]> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const keys = await redis.keys("student:*");
+      if (keys.length > 0) {
+        const pipeline = redis.pipeline();
+        for (const k of keys) pipeline.get<StudentProfile>(k);
+        const results = await pipeline.exec<StudentProfile[]>();
+        const valid = results.filter(Boolean);
+        if (valid.length > 0) return valid;
+      }
+    } catch {
+      // Fall back to memory
+    }
+  }
+  return Array.from(memoryStudents.values());
+}
+
 export async function getStudentProfile(studentId: string): Promise<StudentProfile> {
   const redis = getRedis();
   if (redis) {
@@ -47,9 +66,22 @@ export async function saveStudentProfile(profile: StudentProfile): Promise<void>
     try {
       await redis.set(`student:${profile.id}`, profile);
     } catch {
-      // Ignore Redis write failure in fallback mode
+      // Ignore Redis write failure
     }
   }
+}
+
+export async function deleteStudentProfile(studentId: string): Promise<boolean> {
+  memoryStudents.delete(studentId);
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.del(`student:${studentId}`);
+    } catch {
+      // Ignore Redis error
+    }
+  }
+  return true;
 }
 
 export async function getClassStats(): Promise<ClassTopicStat[]> {

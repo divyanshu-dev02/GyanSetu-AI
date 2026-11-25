@@ -1,7 +1,16 @@
-import { Type, type FunctionDeclaration } from "@google/genai";
 import curriculum from "@/data/curriculum.json";
 import { flagClassWeakness, getClassStats, getStudentProfile, saveStudentProfile } from "@/lib/store";
 import type { DifficultyLevel, QuizQuestion } from "@/lib/types";
+
+// Local type replacement — no longer importing from @google/genai
+type FunctionDeclaration = Record<string, unknown>;
+const Type = {
+  OBJECT: "object",
+  STRING: "string",
+  NUMBER: "number",
+  BOOLEAN: "boolean",
+  ARRAY: "array",
+} as const;
 
 export const studentToolDeclarations: FunctionDeclaration[] = [
   {

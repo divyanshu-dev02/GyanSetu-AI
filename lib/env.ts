@@ -1,10 +1,8 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  GEMINI_API_KEY: z.string().min(1).optional(),
-  GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash"),
   GROQ_API_KEY: z.string().min(1).optional(),
-  GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
+  GROQ_MODEL: z.string().min(1).default("qwen/qwen3.8-27b"),
   DEMO_MODE: z
     .enum(["true", "false"])
     .default("false")
@@ -21,10 +19,8 @@ export function getServerEnv(): ServerEnv {
   if (cachedEnv) return cachedEnv;
 
   const parsed = envSchema.safeParse({
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY || undefined,
-    GEMINI_MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     GROQ_API_KEY: process.env.GROQ_API_KEY || undefined,
-    GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+    GROQ_MODEL: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
     DEMO_MODE: process.env.DEMO_MODE === "true" ? "true" : "false",
     UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL || undefined,
     UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN || undefined,
@@ -33,10 +29,8 @@ export function getServerEnv(): ServerEnv {
   if (!parsed.success) {
     console.error("Invalid environment variables:", parsed.error.flatten());
     cachedEnv = {
-      GEMINI_API_KEY: undefined,
-      GEMINI_MODEL: "gemini-2.5-flash",
       GROQ_API_KEY: undefined,
-      GROQ_MODEL: "llama-3.3-70b-versatile",
+      GROQ_MODEL: "qwen/qwen3.8-27b",
       DEMO_MODE: true,
       UPSTASH_REDIS_REST_URL: undefined,
       UPSTASH_REDIS_REST_TOKEN: undefined,

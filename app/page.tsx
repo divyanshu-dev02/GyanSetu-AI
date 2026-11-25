@@ -1,16 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GraduationCap, BookOpen, Moon, Sun } from "lucide-react";
+import { GraduationCap, BookOpen, Moon, Sun, UserCheck } from "lucide-react";
 import { StudentPage } from "@/components/student-page";
 import { TeacherPage } from "@/components/teacher-page";
+import { AuthModal } from "@/components/auth-modal";
+import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 export default function HomePage() {
   const [role, setRole] = useState<"student" | "teacher">("student");
   const [dark, setDark] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const { user } = useAuth();
 
-  // Respect system preference on first load
   useEffect(() => {
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     setDark(prefersDark);
@@ -42,7 +45,7 @@ export default function HomePage() {
             )}
           >
             <GraduationCap className="h-3.5 w-3.5" />
-            Student
+            Student View
           </button>
           <button
             type="button"
@@ -55,9 +58,20 @@ export default function HomePage() {
             )}
           >
             <BookOpen className="h-3.5 w-3.5" />
-            Teacher
+            Teacher Portal
           </button>
         </div>
+
+        {/* User profile / Auth button */}
+        <button
+          type="button"
+          onClick={() => setIsAuthOpen(true)}
+          className="flex min-h-[40px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-card-md transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+          title="Account profile"
+        >
+          <UserCheck className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+          <span className="hidden sm:inline">{user?.name ? user.name.split(" ")[0] : "Profile"}</span>
+        </button>
 
         {/* Dark mode toggle */}
         <button
@@ -74,6 +88,8 @@ export default function HomePage() {
 
       {/* ── Page content ── */}
       {role === "student" ? <StudentPage /> : <TeacherPage />}
+
+      <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
     </div>
   );
 }

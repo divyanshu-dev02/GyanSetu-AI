@@ -1,4 +1,12 @@
-import { Type, type FunctionDeclaration } from "@google/genai";
+// Local type replacement — no longer importing from @google/genai
+type FunctionDeclaration = Record<string, unknown>;
+const Type = {
+  OBJECT: "object",
+  STRING: "string",
+  NUMBER: "number",
+  BOOLEAN: "boolean",
+  ARRAY: "array",
+} as const;
 import curriculum from "@/data/curriculum.json";
 import {
   ExplainDoubtInputSchema,
